@@ -1,0 +1,57 @@
+{
+  "_meta": {
+    "template_version": 0
+  },
+  "fixtures": [
+    {
+      "name": "basic_product",
+      "path": "/v1/products",
+      "method": "post",
+      "params": {
+        "name": "Tier1(Basic)"
+      }
+    },
+    {
+      "name": "basic_price",
+      "path": "/v1/prices",
+      "method": "post",
+      "params": {
+        "product": "${basic_product:id}",
+        "lookup_key": "tier1_basic",
+        "currency": "inr",
+        "unit_amount": 10000,
+        "recurring": {
+          "interval": "month"
+        },
+        "metadata": {
+          "sample": "fixed-price"
+        }
+      }
+    },
+    {
+      "name": "premium_product",
+      "path": "/v1/products",
+      "method": "post",
+      "params": {
+        "name": "Tier2(Premium)"
+      }
+    },
+    {
+      "name": "premium_price",
+      "path": "/v1/prices",
+      "method": "post",
+      "params": {
+        "product": "${premium_product:id}",
+        "lookup_key": "tier2_premium",
+        "currency": "inr",
+        "unit_amount": 20000,
+        "recurring": {
+          "interval": "month"
+        },
+        "metadata": {
+          "sample": "fixed-price"
+        }
+      }
+    }
+  ]
+}
