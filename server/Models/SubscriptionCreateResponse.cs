@@ -10,7 +10,7 @@ public class SubscriptionCreateResponse
   [JsonProperty("clientSecret")]
   public string ClientSecret { get; set; }
 
-  [JsonProperty("checkoutSession")]
-  public string CheckoutSessionId { get; set; }
+  // [JsonProperty("checkoutSession")]
+  // public string CheckoutSessionId { get; set; }
 
 }

@@ -11,18 +11,22 @@ namespace dotnet.Controllers
 {
     public class BillingController : Controller
     {
+        // Stores Stripe configuration options (like API keys)
         private readonly IOptions<StripeOptions> options;
 
+        // Constructor that injects Stripe configuration
         public BillingController(IOptions<StripeOptions> options)
         {
             this.options = options;
+            // Set the Stripe API key from configuration
             StripeConfiguration.ApiKey = options.Value.SecretKey;
         }
 
+        // Endpoint to get Stripe configuration (publishable key and product prices)
         [HttpGet("config")]
         public ActionResult<ConfigResponse> GetConfig()
         {
-
+            // Create options to look up specific prices by their lookup keys
             var options = new PriceListOptions
             {
               LookupKeys = new List<string>
@@ -34,6 +38,7 @@ namespace dotnet.Controllers
             var service = new PriceService();
             var prices = service.List(options);
 
+            // Return configuration including publishable key and price information
             return new ConfigResponse
             {
                 PublishableKey = this.options.Value.PublishableKey,
@@ -41,9 +46,11 @@ namespace dotnet.Controllers
             };
         }
 
+        // Endpoint to create a new Stripe customer
         [HttpPost("create-customer")]
         public ActionResult<CreateCustomerResponse> CreateCustomer([FromBody] CreateCustomerRequest req)
         {
+            // Set up customer creation options with name and email
             var options = new CustomerCreateOptions
             {
                 Email = req.Email,
@@ -52,9 +59,8 @@ namespace dotnet.Controllers
             var service = new CustomerService();
             var customer = service.Create(options);
 
-            // Set the cookie to simulate an authenticated user.
-            // In practice, this customer.Id is stored along side your
-            // user and retrieved along with the logged in user.
+            // Store customer ID in a cookie to simulate authentication
+            // In a real app, you'd store this in your database with the user
             HttpContext.Response.Cookies.Append("customer", customer.Id);
 
             return new CreateCustomerResponse
@@ -62,75 +68,49 @@ namespace dotnet.Controllers
                 Customer = customer,
             };
         }
-// Add this method to your existing BillingController.cs
 
-[HttpPost("create-subscription")]
-public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] CreateSubscriptionRequest req)
-{
-    var customerId = HttpContext.Request.Cookies["customer"];
-    
-    // Create a Checkout Session first to get checkout summary in dashboard
-    var checkoutSessionOptions = new Stripe.Checkout.SessionCreateOptions
-    {
-        Customer = customerId,
-        PaymentMethodTypes = new List<string> { "card" },
-        LineItems = new List<Stripe.Checkout.SessionLineItemOptions>
+        // Endpoint to create a new subscription
+        [HttpPost("create-subscription")]
+        public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] CreateSubscriptionRequest req)
         {
-            new Stripe.Checkout.SessionLineItemOptions
+            // Get customer ID from cookie
+            var customerId = HttpContext.Request.Cookies["customer"];
+
+            // Set up subscription options
+            var subscriptionOptions = new SubscriptionCreateOptions
             {
-                Price = req.PriceId,
-                Quantity = 1,
-            },
-        },
-        Mode = "subscription",
-        // Use these as metadata - we're not actually redirecting
-        SuccessUrl = "https://yourdomain.com/success?session_id={CHECKOUT_SESSION_ID}",
-        CancelUrl = "https://yourdomain.com/cancel",
-    };
-    
-    var checkoutService = new Stripe.Checkout.SessionService();
-    var checkoutSession = checkoutService.Create(checkoutSessionOptions);
-    
-    // Now continue with your regular subscription creation
-    var subscriptionOptions = new SubscriptionCreateOptions
-    {
-        Customer = customerId,
-        Items = new List<SubscriptionItemOptions>
-        {
-            new SubscriptionItemOptions
+                Customer = customerId,
+                Items = new List<SubscriptionItemOptions>
+                {
+                    new SubscriptionItemOptions
+                    {
+                        Price = req.PriceId, // The price ID to subscribe to
+                    },
+                },
+                PaymentBehavior = "default_incomplete", // Requires payment immediately
+            };
+            // Expand related objects to get payment intent details
+            subscriptionOptions.AddExpand("latest_invoice.payment_intent");
+            var subscriptionService = new SubscriptionService();
+            try
             {
-                Price = req.PriceId,
-            },
-        },
-        PaymentBehavior = "default_incomplete",
-        // Link to the checkout session for dashboard tracking
-        Metadata = new Dictionary<string, string>
-        {
-            { "checkout_session_id", checkoutSession.Id }
+                Subscription subscription = subscriptionService.Create(subscriptionOptions);
+
+                // Return subscription ID and client secret for Stripe Elements/Checkout
+                return new SubscriptionCreateResponse
+                {
+                  SubscriptionId = subscription.Id,
+                  ClientSecret = subscription.LatestInvoice.PaymentIntent.ClientSecret,
+                };
+            }
+            catch (StripeException e)
+            {
+                Console.WriteLine($"Failed to create subscription.{e}");
+                return BadRequest();
+            }
         }
-    };
-    
-    subscriptionOptions.AddExpand("latest_invoice.payment_intent");
-    var subscriptionService = new SubscriptionService();
-    
-    try
-    {
-        Subscription subscription = subscriptionService.Create(subscriptionOptions);
 
-        return new SubscriptionCreateResponse
-        {
-            SubscriptionId = subscription.Id,
-            ClientSecret = subscription.LatestInvoice.PaymentIntent.ClientSecret,
-            CheckoutSessionId = checkoutSession.Id // Include this if you need it on frontend
-        };
-    }
-    catch (StripeException e)
-    {
-        Console.WriteLine($"Failed to create subscription.{e}");
-        return BadRequest();
-    }
-}
-
+        // Endpoint to preview an invoice for a subscription change
         [HttpGet("invoice-preview")]
         public ActionResult<InvoiceResponse> InvoicePreview(string subscriptionId, string newPriceLookupKey)
         {
@@ -138,6 +118,7 @@ public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] Cr
             var service = new SubscriptionService();
             var subscription = service.Get(subscriptionId);
 
+            // Set up options to preview upcoming invoice with price change
             var invoiceService = new InvoiceService();
             var options = new UpcomingInvoiceOptions
             {
@@ -158,10 +139,12 @@ public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] Cr
             };
         }
 
+        // Endpoint to cancel a subscription
         [HttpPost("cancel-subscription")]
         public ActionResult<SubscriptionResponse> CancelSubscription([FromBody] CancelSubscriptionRequest req)
         {
             var service = new SubscriptionService();
+            // Immediately cancel the subscription
             var subscription = service.Cancel(req.Subscription, null);
             return new SubscriptionResponse
             {
@@ -169,12 +152,14 @@ public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] Cr
             };
         }
 
+        // Endpoint to update a subscription
         [HttpPost("update-subscription")]
         public ActionResult<SubscriptionResponse> UpdateSubscription([FromBody] UpdateSubscriptionRequest req)
         {
             var service = new SubscriptionService();
             var subscription = service.Get(req.Subscription);
 
+            // Set up subscription update options with new price
             var options = new SubscriptionUpdateOptions
             {
                 CancelAtPeriodEnd = false,
@@ -194,6 +179,7 @@ public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] Cr
             };
         }
 
+        // Endpoint to list all subscriptions for the current customer
         [HttpGet("subscriptions")]
         public ActionResult<SubscriptionsResponse> ListSubscriptions()
         {
@@ -201,8 +187,9 @@ public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] Cr
             var options = new SubscriptionListOptions
             {
                 Customer = customerId,
-                Status = "all",
+                Status = "all", // Include all statuses (active, past_due, canceled, etc.)
             };
+            // Include payment method details in the response
             options.AddExpand("data.default_payment_method");
             var service = new SubscriptionService();
             var subscriptions = service.List(options);
@@ -212,14 +199,16 @@ public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] Cr
             };
         }
 
-
+        // Stripe webhook endpoint to handle asynchronous events
         [HttpPost("webhook")]
         public async Task<IActionResult> Webhook()
         {
+            // Read the request body
             var json = await new StreamReader(HttpContext.Request.Body).ReadToEndAsync();
             Event stripeEvent;
             try
             {
+                // Validate the webhook signature
                 stripeEvent = EventUtility.ConstructEvent(
                     json,
                     Request.Headers["Stripe-Signature"],
@@ -233,15 +222,16 @@ public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] Cr
                 return BadRequest();
             }
 
+            // Handle different webhook event types
             if (stripeEvent.Type == "invoice.payment_succeeded") {
               var invoice = stripeEvent.Data.Object as Invoice;
 
+              // Special case for when subscription is first created
               if(invoice.BillingReason == "subscription_create") {
-
                 var service = new PaymentIntentService();
                 var paymentIntent = service.Get(invoice.PaymentIntentId);
 
-                // Set the default payment method
+                // Set the default payment method for the subscription
                 var options = new SubscriptionUpdateOptions
                 {
                   DefaultPaymentMethod = paymentIntent.PaymentMethodId,
@@ -256,31 +246,23 @@ public ActionResult<SubscriptionCreateResponse> CreateSubscription([FromBody] Cr
 
             if (stripeEvent.Type == "invoice.paid")
             {
-                // Used to provision services after the trial has ended.
-                // The status of the invoice will show up as paid. Store the status in your
-                // database to reference when a user accesses your service to avoid hitting rate
-                // limits.
+                // Handle successful payment (provision services, update database, etc.)
             }
             if (stripeEvent.Type == "invoice.payment_failed")
             {
-                // If the payment fails or the customer does not have a valid payment method,
-                // an invoice.payment_failed event is sent, the subscription becomes past_due.
-                // Use this webhook to notify your user that their payment has
-                // failed and to retrieve new card details.
+                // Handle failed payment (notify user, retry logic, etc.)
             }
             if (stripeEvent.Type == "invoice.finalized")
             {
-                // If you want to manually send out invoices to your customers
-                // or store them locally to reference to avoid hitting Stripe rate limits.
+                // Handle finalized invoices (store locally, send to user, etc.)
             }
             if (stripeEvent.Type == "customer.subscription.deleted")
             {
-                // handle subscription cancelled automatically based
-                // upon your subscription settings. Or if the user cancels it.
+                // Handle subscription cancellation (clean up resources, etc.)
             }
             if (stripeEvent.Type == "customer.subscription.trial_will_end")
             {
-                // Send notification to your user that the trial will end
+                // Notify user their trial is ending soon
             }
 
             return Ok();
